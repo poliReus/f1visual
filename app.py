@@ -40,15 +40,24 @@ def get_lap_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date_start"] = pd.to_datetime(
-            df.get("date_start"), format="ISO8601", errors="coerce"
-        )
-        if "lap_number" in df.columns:
-            df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
-        if "lap_duration" in df.columns:
-            df["lap_duration"] = pd.to_numeric(df["lap_duration"], errors="coerce")
-            # Remove rows with invalid lap_duration
-            df = df.dropna(subset=["lap_duration"])
+        df["date_start"] = pd.to_datetime(df.get("date_start"), utc=True, errors="coerce")
+
+        numeric_cols = [
+            "lap_number",
+            "duration_sector_1",
+            "duration_sector_2",
+            "duration_sector_3",
+            "i1_speed",
+            "i2_speed",
+            "lap_duration",
+            "st_speed",
+        ]
+
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df = df.dropna(subset=["lap_duration"])
     return df
 
 
@@ -60,11 +69,12 @@ def get_position_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
-        if "lap_number" in df.columns:
-            df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
-        if "position" in df.columns:
-            df["position"] = pd.to_numeric(df["position"], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+
+        numeric_cols = ["lap_number", "position"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
@@ -76,11 +86,12 @@ def get_pit_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
-        if "pit_duration" in df.columns:
-            df["pit_duration"] = pd.to_numeric(df["pit_duration"], errors="coerce")
-        if "lap_number" in df.columns:
-            df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
+        df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+
+        numeric_cols = ["pit_duration", "lap_number"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
 
 
@@ -104,12 +115,13 @@ def get_car_data(
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
-        df["throttle"] = pd.to_numeric(df["throttle"], errors="coerce")
-        df["speed"] = pd.to_numeric(df["speed"], errors="coerce")
-        df["rpm"] = pd.to_numeric(df["rpm"], errors="coerce")
-        df["brake"] = pd.to_numeric(df["brake"], errors="coerce")
-        # Remove rows with invalid data
+        df["date"] = pd.to_datetime(df["date"], utc=True, errors="coerce")
+
+        numeric_cols = ["throttle", "speed", "rpm", "brake", "n_gear"]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
         df = df.dropna(subset=["date"])
     return df
 

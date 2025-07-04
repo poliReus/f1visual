@@ -66,8 +66,8 @@ class F1API:
         if not latest:
             return None
         now = datetime.now(timezone.utc)
-        start = pd.to_datetime(latest["date_start"])
-        end = pd.to_datetime(latest["date_end"])
+        start = pd.to_datetime(latest["date_start"], utc=True, format="ISO8601")
+        end = pd.to_datetime(latest["date_end"], utc=True, format="ISO8601")
         if start <= now <= end:
             return latest
         key = latest["session_key"] - 1
@@ -76,7 +76,7 @@ class F1API:
             if not prev:
                 key -= 1
                 continue
-            if pd.to_datetime(prev["date_end"]) <= now:
+            if pd.to_datetime(prev["date_end"], utc=True, format="ISO8601") <= now:
                 return prev
             key -= 1
         return latest
@@ -96,7 +96,7 @@ class F1API:
         )
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
         return df
 
     def get_position_data(self) -> pd.DataFrame:
@@ -105,7 +105,7 @@ class F1API:
         data = self._get(f"position?session_key={self.session_key}")
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
         return df
 
     def get_lap_data(self) -> pd.DataFrame:
@@ -114,7 +114,7 @@ class F1API:
         data = self._get(f"laps?session_key={self.session_key}")
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date_start"] = pd.to_datetime(df["date_start"])
+            df["date_start"] = pd.to_datetime(df["date_start"], utc=True, format="ISO8601", errors="coerce")
         return df
 
     def get_weather_data(self) -> pd.DataFrame:
@@ -123,7 +123,7 @@ class F1API:
         data = self._get(f"weather?session_key={self.session_key}")
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
         return df
 
     def get_intervals(self) -> pd.DataFrame:
@@ -132,7 +132,7 @@ class F1API:
         data = self._get(f"intervals?session_key={self.session_key}")
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
         return df
 
     def get_pit_data(self) -> pd.DataFrame:
@@ -141,8 +141,14 @@ class F1API:
         data = self._get(f"pit?session_key={self.session_key}")
         df = pd.DataFrame(data)
         if not df.empty:
-            df["date"] = pd.to_datetime(df["date"])
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
         return df
+
+    def get_stint_data(self) -> pd.DataFrame:
+        if not self.session_key:
+            return pd.DataFrame()
+        data = self._get(f"stints?session_key={self.session_key}")
+        return pd.DataFrame(data)
 
 
 class DataFetcher(QtCore.QThread):
@@ -175,6 +181,7 @@ class DataFetcher(QtCore.QThread):
                 "weather": self.api.get_weather_data(),
                 "intervals": self.api.get_intervals(),
                 "pit": self.api.get_pit_data(),
+                "stints": self.api.get_stint_data(),
             }
             self.dataFetched.emit(payload)
             self.msleep(self.interval * 1000)
@@ -442,6 +449,38 @@ class PitStopWidget(MplWidget):
         self.canvas.draw_idle()
 
 
+class TyreUsageWidget(MplWidget):
+    def __init__(self) -> None:
+        super().__init__(10, 4)
+        self.ax = self.figure.add_subplot(111)
+
+    def update_chart(self, df: pd.DataFrame, drivers: Dict[int, Dict]) -> None:
+        self.ax.clear()
+        if df.empty:
+            self.canvas.draw_idle()
+            return
+        compound_colors = {
+            "SOFT": "#ff4d4d",
+            "MEDIUM": "#ffd700",
+            "HARD": "#f2f2f2",
+            "INTERMEDIATE": "#00ff7f",
+            "WET": "#1e90ff",
+        }
+        driver_map = {n: i for i, n in enumerate(sorted(df["driver_number"].unique()))}
+        for _, row in df.iterrows():
+            y = driver_map[row["driver_number"]]
+            start = row.get("lap_start") or 0
+            end = row.get("lap_end") or start + 1
+            color = compound_colors.get(str(row.get("compound", "")).upper(), "#cccccc")
+            self.ax.broken_barh([(start, end - start)], (y - 0.4, 0.8), facecolors=color)
+        self.ax.set_xlabel("Lap")
+        self.ax.set_yticks(list(driver_map.values()))
+        self.ax.set_yticklabels([drivers.get(n, {}).get("name_acronym", f"#{n}") for n in sorted(driver_map.keys())])
+        self.ax.set_title("Tyre Stints")
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+
 class F1MultiViewer(QtWidgets.QMainWindow):
     """Main window for the application."""
 
@@ -497,7 +536,9 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         s_layout = QtWidgets.QVBoxLayout(self.strategy_tab)
         self.pit_widget = PitStopWidget()
         self.weather_widget = WeatherWidget()
+        self.tyre_widget = TyreUsageWidget()
         s_layout.addWidget(self.pit_widget)
+        s_layout.addWidget(self.tyre_widget)
         s_layout.addWidget(self.weather_widget)
         scroll3 = QtWidgets.QScrollArea()
         scroll3.setWidget(self.strategy_tab)
@@ -515,9 +556,10 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         weather = data.get("weather", pd.DataFrame())
         intervals = data.get("intervals", pd.DataFrame())
         pit = data.get("pit", pd.DataFrame())
+        stints = data.get("stints", pd.DataFrame())
 
-        start = pd.to_datetime(session.get("date_start"))
-        end = pd.to_datetime(session.get("date_end"))
+        start = pd.to_datetime(session.get("date_start"), utc=True, format="ISO8601")
+        end = pd.to_datetime(session.get("date_end"), utc=True, format="ISO8601")
         now = datetime.now(timezone.utc)
         live = start <= now <= end
         color = "green" if live else "red"
@@ -533,6 +575,7 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         self.laptime_widget.update_chart(lap, drivers)
         self.weather_widget.update_chart(weather)
         self.pit_widget.update_chart(pit, drivers)
+        self.tyre_widget.update_chart(stints, drivers)
 
         if session.get("session_type", "").lower() == "race":
             self.intervals_widget.show()

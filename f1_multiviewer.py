@@ -30,6 +30,14 @@ try:
 except Exception:
     _HAS_DARK = False
 
+
+def get_color(drivers: Dict[int, Dict], num: int) -> Optional[str]:
+    """Return team color for driver as hex string or None."""
+    color = drivers.get(num, {}).get("team_colour")
+    if color and isinstance(color, str) and color.startswith("#"):
+        return color
+    return None
+
 matplotlib.use("Agg")  # use non-interactive backend for embedding
 
 
@@ -249,17 +257,21 @@ class SpeedAnalysisWidget(MplWidget):
             if df.empty:
                 continue
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            ax1.plot(df["date"], df["speed"], label=name)
+            color = get_color(drivers, num)
+            ax1.plot(df["date"], df["speed"], label=name, color=color)
         ax1.set_title("Speed Over Time")
         ax1.set_xlabel("Time")
         ax1.set_ylabel("Speed (km/h)")
         ax1.legend()
         ax1.grid(True, alpha=0.3)
 
-        speeds = [df["speed"].values for df in car_data.values() if not df.empty]
-        labels = [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in car_data]
-        if speeds:
-            ax2.hist(speeds, bins=20, label=labels, alpha=0.7)
+        if car_data:
+            for num, df in car_data.items():
+                if df.empty:
+                    continue
+                name = drivers.get(num, {}).get("name_acronym", f"#{num}")
+                color = get_color(drivers, num)
+                ax2.hist(df["speed"].values, bins=20, label=name, alpha=0.7, color=color)
             ax2.set_title("Speed Distribution")
             ax2.set_xlabel("Speed (km/h)")
             ax2.set_ylabel("Frequency")
@@ -269,7 +281,8 @@ class SpeedAnalysisWidget(MplWidget):
             if df.empty:
                 continue
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            ax3.scatter(df["throttle"], df["speed"], label=name, alpha=0.6)
+            color = get_color(drivers, num)
+            ax3.scatter(df["throttle"], df["speed"], label=name, alpha=0.6, color=color)
         ax3.set_title("Throttle vs Speed")
         ax3.set_xlabel("Throttle (%)")
         ax3.set_ylabel("Speed (km/h)")
@@ -280,7 +293,8 @@ class SpeedAnalysisWidget(MplWidget):
             if df.empty or "rpm" not in df:
                 continue
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            ax4.plot(df["date"], df["rpm"], label=name)
+            color = get_color(drivers, num)
+            ax4.plot(df["date"], df["rpm"], label=name, color=color)
         ax4.set_title("RPM Over Time")
         ax4.set_xlabel("Time")
         ax4.set_ylabel("RPM")
@@ -302,7 +316,15 @@ class PositionTrackerWidget(MplWidget):
             for num in df["driver_number"].unique():
                 d = df[df["driver_number"] == num]
                 name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-                self.ax.plot(d["date"], d["position"], label=name, marker="o", markersize=3)
+                color = get_color(drivers, num)
+                self.ax.plot(
+                    d["date"],
+                    d["position"],
+                    label=name,
+                    marker="o",
+                    markersize=3,
+                    color=color,
+                )
         self.ax.set_title("Driver Position Tracker")
         self.ax.set_xlabel("Time")
         self.ax.set_ylabel("Position")
@@ -329,7 +351,8 @@ class LapTimeWidget(MplWidget):
         for num in df["driver_number"].unique():
             d = df[df["driver_number"] == num]
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            ax1.plot(d["lap_number"], d["lap_duration"], marker="o", label=name)
+            color = get_color(drivers, num)
+            ax1.plot(d["lap_number"], d["lap_duration"], marker="o", label=name, color=color)
         ax1.set_title("Lap Times by Driver")
         ax1.set_xlabel("Lap Number")
         ax1.set_ylabel("Lap Duration (s)")
@@ -353,7 +376,8 @@ class LapTimeWidget(MplWidget):
 
         best = df.groupby("driver_number")["lap_duration"].min().sort_values()
         names = [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in best.index]
-        bars = ax4.bar(names, best.values)
+        colors = [get_color(drivers, n) for n in best.index]
+        bars = ax4.bar(names, best.values, color=colors)
         ax4.set_title("Best Lap Times")
         ax4.set_ylabel("Lap Duration (s)")
         ax4.tick_params(axis="x", rotation=45)
@@ -430,7 +454,15 @@ class IntervalsWidget(MplWidget):
         for num in df["driver_number"].unique():
             d = df[df["driver_number"] == num]
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            ax1.plot(d["date"], d["gap_to_leader"], marker="o", markersize=3, label=name)
+            color = get_color(drivers, num)
+            ax1.plot(
+                d["date"],
+                d["gap_to_leader"],
+                marker="o",
+                markersize=3,
+                label=name,
+                color=color,
+            )
         ax1.set_title("Gap to Leader")
         ax1.set_xlabel("Time")
         ax1.set_ylabel("Gap (s)")
@@ -439,7 +471,8 @@ class IntervalsWidget(MplWidget):
 
         latest = df.groupby("driver_number").last()
         names = [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in latest.index]
-        bars = ax2.bar(names, latest["gap_to_leader"])
+        colors = [get_color(drivers, n) for n in latest.index]
+        bars = ax2.bar(names, latest["gap_to_leader"], color=colors)
         ax2.set_title("Current Gap to Leader")
         ax2.set_ylabel("Gap (s)")
         ax2.tick_params(axis="x", rotation=45)
@@ -464,7 +497,8 @@ class PitStopWidget(MplWidget):
             return
 
         names = [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in df["driver_number"]]
-        bars = ax1.bar(names, df["pit_duration"])
+        colors = [get_color(drivers, n) for n in df["driver_number"]]
+        bars = ax1.bar(names, df["pit_duration"], color=colors)
         ax1.set_title("Pit Stop Durations")
         ax1.set_ylabel("Duration (s)")
         ax1.tick_params(axis="x", rotation=45)
@@ -472,8 +506,10 @@ class PitStopWidget(MplWidget):
             ax1.text(bar.get_x() + bar.get_width() / 2, val, f"{val:.1f}s", ha="center", va="bottom", fontsize=8)
 
         for _, row in df.iterrows():
-            name = drivers.get(row["driver_number"], {}).get("name_acronym", f"#{row['driver_number']}")
-            ax2.scatter(row["date"], name, s=100)
+            num = row["driver_number"]
+            name = drivers.get(num, {}).get("name_acronym", f"#{num}")
+            color = get_color(drivers, num)
+            ax2.scatter(row["date"], name, s=100, color=color)
         ax2.set_title("Pit Stop Timeline")
         ax2.set_xlabel("Time")
         ax2.set_ylabel("Driver")
@@ -509,7 +545,11 @@ class TyreUsageWidget(MplWidget):
             self.ax.broken_barh([(start, end - start)], (y - 0.4, 0.8), facecolors=color)
         self.ax.set_xlabel("Lap")
         self.ax.set_yticks(list(driver_map.values()))
-        self.ax.set_yticklabels([drivers.get(n, {}).get("name_acronym", f"#{n}") for n in sorted(driver_map.keys())])
+        labels = [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in sorted(driver_map.keys())]
+        self.ax.set_yticklabels(labels)
+        for tick, num in zip(self.ax.get_yticklabels(), sorted(driver_map.keys())):
+            color = get_color(drivers, num) or "black"
+            tick.set_color(color)
         self.ax.set_title("Tyre Stints")
         self.figure.tight_layout()
         self.canvas.draw_idle()
@@ -524,18 +564,29 @@ class DriverSelectionWidget(QtWidgets.QGroupBox):
         self.list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
         layout = QtWidgets.QVBoxLayout(self)
         layout.addWidget(self.list)
+        # slightly larger height so the list is easily clickable
+        self.list.setMinimumHeight(140)
         self.list.itemChanged.connect(lambda _=None: self.selectionChanged.emit())
 
     def update_drivers(self, drivers: Dict[int, Dict]) -> None:
-        existing = {self.list.item(i).data(QtCore.Qt.UserRole) for i in range(self.list.count())}
+        """Update the list of drivers keeping current selections."""
+        current_checks = {
+            self.list.item(i).data(QtCore.Qt.UserRole): self.list.item(i).checkState() == QtCore.Qt.Checked
+            for i in range(self.list.count())
+        }
         self.list.blockSignals(True)
-        for num, info in sorted(drivers.items()):
-            if num not in existing:
-                item = QtWidgets.QListWidgetItem(info.get("name_acronym", f"#{num}"))
-                item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
-                item.setData(QtCore.Qt.UserRole, num)
-                item.setCheckState(QtCore.Qt.Unchecked)
-                self.list.addItem(item)
+        self.list.clear()
+        for idx, (num, info) in enumerate(sorted(drivers.items())):
+            item = QtWidgets.QListWidgetItem(info.get("name_acronym", f"#{num}"))
+            item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            item.setData(QtCore.Qt.UserRole, num)
+            color = info.get("team_colour")
+            if color:
+                item.setForeground(QtGui.QColor(color))
+            # check previously selected or first five by default
+            checked = current_checks.get(num, idx < 5)
+            item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+            self.list.addItem(item)
         self.list.blockSignals(False)
 
     def selected_drivers(self) -> List[int]:
@@ -560,7 +611,11 @@ class BestLapTableWidget(QtWidgets.QTableWidget):
         self.setRowCount(len(best))
         for row, (num, val) in enumerate(best.items()):
             name = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            self.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
+            color = get_color(drivers, num)
+            item_name = QtWidgets.QTableWidgetItem(name)
+            if color:
+                item_name.setForeground(QtGui.QColor(color))
+            self.setItem(row, 0, item_name)
             self.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{val:.3f}"))
         self.resizeColumnsToContents()
 
@@ -576,6 +631,10 @@ class LapTimesTableWidget(QtWidgets.QTableWidget):
         headers = ["Lap"] + [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in pivot.columns]
         self.setColumnCount(len(headers))
         self.setHorizontalHeaderLabels(headers)
+        for idx, num in enumerate(pivot.columns, start=1):
+            color = get_color(drivers, num)
+            if color:
+                self.horizontalHeaderItem(idx).setForeground(QtGui.QColor(color))
         self.setRowCount(len(pivot))
         for r, (lap_num, row) in enumerate(pivot.iterrows()):
             self.setItem(r, 0, QtWidgets.QTableWidgetItem(str(int(lap_num))))
@@ -617,7 +676,8 @@ class BestLapThrottleWidget(MplWidget):
                 continue
             t = (seg["date"] - start).dt.total_seconds()
             label = drivers.get(num, {}).get("name_acronym", f"#{num}")
-            self.ax.plot(t, seg["throttle"], label=label)
+            color = get_color(drivers, num)
+            self.ax.plot(t, seg["throttle"], label=label, color=color)
         self.ax.set_title("Throttle % over Best Lap")
         self.ax.set_xlabel("Time (s)")
         self.ax.set_ylabel("Throttle %")
@@ -625,6 +685,76 @@ class BestLapThrottleWidget(MplWidget):
         self.ax.grid(True, alpha=0.3)
         self.figure.tight_layout()
         self.canvas.draw_idle()
+
+
+class RaceTraceWidget(MplWidget):
+    """Simple live gap chart similar to MultiViewer's race trace."""
+
+    def __init__(self) -> None:
+        super().__init__(10, 4)
+        self.ax = self.figure.add_subplot(111)
+
+    def update_chart(self, df: pd.DataFrame, drivers: Dict[int, Dict]) -> None:
+        self.ax.clear()
+        if df.empty:
+            self.canvas.draw_idle()
+            return
+        for num in df["driver_number"].unique():
+            d = df[df["driver_number"] == num]
+            name = drivers.get(num, {}).get("name_acronym", f"#{num}")
+            color = get_color(drivers, num)
+            gaps = pd.to_numeric(d["gap_to_leader"], errors="coerce")
+            self.ax.plot(d["date"], gaps, label=name, color=color)
+        self.ax.set_title("Race Trace - Gap to Leader")
+        self.ax.set_xlabel("Time")
+        self.ax.set_ylabel("Gap (s)")
+        self.ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+        self.ax.grid(True, alpha=0.3)
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+
+class TelemetryOverlayWidget(QtWidgets.QGroupBox):
+    """Compact telemetry readout for a single driver."""
+
+    def __init__(self) -> None:
+        super().__init__("Telemetry")
+        layout = QtWidgets.QVBoxLayout(self)
+        self.header = QtWidgets.QLabel("-")
+        font = self.header.font()
+        font.setBold(True)
+        self.header.setFont(font)
+        self.header.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.header)
+
+        grid = QtWidgets.QGridLayout()
+        layout.addLayout(grid)
+        self.fields = {}
+        labels = ["TLA", "Position", "Speed", "Gear", "Throttle", "Brake", "DRS"]
+        for row, name in enumerate(labels):
+            lab = QtWidgets.QLabel(f"{name}:")
+            val = QtWidgets.QLabel("-")
+            grid.addWidget(lab, row, 0)
+            grid.addWidget(val, row, 1)
+            self.fields[name] = val
+
+    def update_data(self, car_df: pd.DataFrame, driver: Dict) -> None:
+        if car_df is None or car_df.empty or not driver:
+            self.header.setText("-")
+            for val in self.fields.values():
+                val.setText("-")
+            return
+        latest = car_df.iloc[-1]
+        self.header.setText(f"{driver.get('broadcast_name', '')} - {driver.get('team_name', '')}")
+        color = driver.get("team_colour", "#ffffff")
+        self.setStyleSheet(f"QGroupBox{{border:2px solid {color}; margin-top:1ex}}")
+        self.fields["TLA"].setText(driver.get("name_acronym", ""))
+        self.fields["Position"].setText(str(driver.get("position", "?")))
+        self.fields["Speed"].setText(f"{int(latest.get('speed', 0))} km/h")
+        self.fields["Gear"].setText(str(latest.get("n_gear", "")))
+        self.fields["Throttle"].setText(f"{latest.get('throttle', 0)}%")
+        self.fields["Brake"].setText(f"{latest.get('brake', 0)}%")
+        self.fields["DRS"].setText(str(latest.get("drs", 0)))
 
 
 class F1MultiViewer(QtWidgets.QMainWindow):
@@ -659,58 +789,56 @@ class F1MultiViewer(QtWidgets.QMainWindow):
             lambda: self.fetcher.set_selected_drivers(self.driver_selector.selected_drivers())
         )
 
-        self.tabs = QtWidgets.QTabWidget()
-        layout.addWidget(self.tabs)
+        # create view menu for toggling docks
+        self.view_menu = self.menuBar().addMenu("View")
+        self.docks: Dict[str, QtWidgets.QDockWidget] = {}
 
-        self.track_tab = QtWidgets.QWidget()
-        t_layout = QtWidgets.QVBoxLayout(self.track_tab)
+        def _add_dock(title: str, widget: QtWidgets.QWidget, area: QtCore.Qt.DockWidgetArea) -> None:
+            dock = QtWidgets.QDockWidget(title)
+            dock.setObjectName(title)
+            dock.setWidget(widget)
+            dock.setAllowedAreas(QtCore.Qt.AllDockWidgetAreas)
+            self.addDockWidget(area, dock)
+            self.view_menu.addAction(dock.toggleViewAction())
+            self.docks[title] = dock
+
+        self.telemetry_widget = TelemetryOverlayWidget()
+        _add_dock("Telemetry", self.telemetry_widget, QtCore.Qt.LeftDockWidgetArea)
+
         self.position_widget = PositionTrackerWidget()
+        _add_dock("Position", self.position_widget, QtCore.Qt.RightDockWidgetArea)
+
         self.speed_widget = SpeedAnalysisWidget()
-        t_layout.addWidget(self.position_widget)
-        t_layout.addWidget(self.speed_widget)
-        scroll1 = QtWidgets.QScrollArea()
-        scroll1.setWidget(self.track_tab)
-        scroll1.setWidgetResizable(True)
-        self.tabs.addTab(scroll1, "Track")
+        _add_dock("Speed", self.speed_widget, QtCore.Qt.RightDockWidgetArea)
 
-        self.lap_tab = QtWidgets.QWidget()
-        l_layout = QtWidgets.QVBoxLayout(self.lap_tab)
+        self.trace_widget = RaceTraceWidget()
+        _add_dock("Race Trace", self.trace_widget, QtCore.Qt.BottomDockWidgetArea)
+
         self.laptime_widget = LapTimeWidget()
+        _add_dock("Lap Times", self.laptime_widget, QtCore.Qt.RightDockWidgetArea)
+
         self.throttle_widget = BestLapThrottleWidget()
+        _add_dock("Throttle", self.throttle_widget, QtCore.Qt.BottomDockWidgetArea)
+
         self.intervals_widget = IntervalsWidget()
-        l_layout.addWidget(self.laptime_widget)
-        l_layout.addWidget(self.throttle_widget)
-        l_layout.addWidget(self.intervals_widget)
-        scroll2 = QtWidgets.QScrollArea()
-        scroll2.setWidget(self.lap_tab)
-        scroll2.setWidgetResizable(True)
-        self.tabs.addTab(scroll2, "Laps")
+        _add_dock("Intervals", self.intervals_widget, QtCore.Qt.BottomDockWidgetArea)
 
-        self.strategy_tab = QtWidgets.QWidget()
-        s_layout = QtWidgets.QVBoxLayout(self.strategy_tab)
         self.pit_widget = PitStopWidget()
+        _add_dock("Pit Stops", self.pit_widget, QtCore.Qt.BottomDockWidgetArea)
+
         self.weather_widget = WeatherWidget()
+        _add_dock("Weather", self.weather_widget, QtCore.Qt.BottomDockWidgetArea)
+
         self.tyre_widget = TyreUsageWidget()
-        s_layout.addWidget(self.pit_widget)
-        s_layout.addWidget(self.tyre_widget)
-        s_layout.addWidget(self.weather_widget)
-        scroll3 = QtWidgets.QScrollArea()
-        scroll3.setWidget(self.strategy_tab)
-        scroll3.setWidgetResizable(True)
-        self.tabs.addTab(scroll3, "Strategy")
+        _add_dock("Tyres", self.tyre_widget, QtCore.Qt.BottomDockWidgetArea)
 
-        self.standings_tab = QtWidgets.QWidget()
-        st_layout = QtWidgets.QVBoxLayout(self.standings_tab)
         self.bestlap_table = BestLapTableWidget()
-        self.lap_table = LapTimesTableWidget()
-        st_layout.addWidget(self.bestlap_table)
-        st_layout.addWidget(self.lap_table)
-        scroll4 = QtWidgets.QScrollArea()
-        scroll4.setWidget(self.standings_tab)
-        scroll4.setWidgetResizable(True)
-        self.tabs.addTab(scroll4, "Standings")
+        _add_dock("Best Laps", self.bestlap_table, QtCore.Qt.RightDockWidgetArea)
 
-        self.resize(1200, 800)
+        self.lap_table = LapTimesTableWidget()
+        _add_dock("Lap Table", self.lap_table, QtCore.Qt.RightDockWidgetArea)
+
+        self.resize(1400, 900)
 
     def update_data(self, data: dict) -> None:
         session = data.get("session", {})
@@ -739,10 +867,19 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         selected = self.driver_selector.selected_drivers() or list(drivers.keys())[:5]
         self.fetcher.set_selected_drivers(selected)
         filtered_car = {n: car_data.get(n, pd.DataFrame()) for n in selected}
+        first_driver = selected[0] if selected else None
+        driver_info = drivers.get(first_driver, {}) if first_driver else {}
+        if first_driver is not None and not pos.empty:
+            p = pos[pos["driver_number"] == first_driver]
+            if not p.empty:
+                driver_info = dict(driver_info)
+                driver_info["position"] = int(p.iloc[-1].get("position", 0))
+        self.telemetry_widget.update_data(car_data.get(first_driver, pd.DataFrame()), driver_info)
         self.speed_widget.update_chart(filtered_car, drivers)
         self.position_widget.update_chart(pos, drivers)
         self.laptime_widget.update_chart(lap, drivers)
         self.throttle_widget.update_chart(lap, filtered_car, {n: drivers[n] for n in selected if n in drivers}, self.api)
+        self.trace_widget.update_chart(intervals[intervals["driver_number"].isin(selected)], drivers)
         self.weather_widget.update_chart(weather)
         self.pit_widget.update_chart(pit, drivers)
         self.tyre_widget.update_chart(stints, drivers)
@@ -750,10 +887,10 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         self.lap_table.update_table(lap, drivers)
 
         if session.get("session_type", "").lower() == "race":
-            self.intervals_widget.show()
+            self.docks.get("Intervals", self.intervals_widget).setVisible(True)
             self.intervals_widget.update_chart(intervals, drivers)
         else:
-            self.intervals_widget.hide()
+            self.docks.get("Intervals", self.intervals_widget).setVisible(False)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore
         self.fetcher.stop()

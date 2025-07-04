@@ -31,12 +31,19 @@ except Exception:
     _HAS_DARK = False
 
 
-def get_color(drivers: Dict[int, Dict], num: int) -> Optional[str]:
-    """Return team color for driver as hex string or None."""
+DEFAULT_COLOR = "#333333"
+
+
+def get_color(drivers: Dict[int, Dict], num: int, default: str = DEFAULT_COLOR) -> str:
+    """Return team color for driver as hex string.
+
+    If the driver's team colour is missing or invalid, ``default`` is returned
+    to ensure matplotlib always receives a valid colour value.
+    """
     color = drivers.get(num, {}).get("team_colour")
     if color and isinstance(color, str) and color.startswith("#"):
         return color
-    return None
+    return default
 
 matplotlib.use("Agg")  # use non-interactive backend for embedding
 

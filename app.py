@@ -40,11 +40,15 @@ def get_lap_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date_start"] = pd.to_datetime(df["date_start"], format='ISO8601', errors='coerce')
-        df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
-        df["lap_duration"] = pd.to_numeric(df["lap_duration"], errors="coerce")
-        # Remove rows with invalid lap_duration
-        df = df.dropna(subset=["lap_duration"])
+        df["date_start"] = pd.to_datetime(
+            df.get("date_start"), format="ISO8601", errors="coerce"
+        )
+        if "lap_number" in df.columns:
+            df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
+        if "lap_duration" in df.columns:
+            df["lap_duration"] = pd.to_numeric(df["lap_duration"], errors="coerce")
+            # Remove rows with invalid lap_duration
+            df = df.dropna(subset=["lap_duration"])
     return df
 
 
@@ -56,7 +60,7 @@ def get_position_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format='ISO8601', errors='coerce')
+        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
         if "lap_number" in df.columns:
             df["lap_number"] = pd.to_numeric(df["lap_number"], errors="coerce")
         if "position" in df.columns:
@@ -72,7 +76,7 @@ def get_pit_data(session_key: int) -> pd.DataFrame:
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format='ISO8601', errors='coerce')
+        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
         if "pit_duration" in df.columns:
             df["pit_duration"] = pd.to_numeric(df["pit_duration"], errors="coerce")
         if "lap_number" in df.columns:
@@ -82,10 +86,10 @@ def get_pit_data(session_key: int) -> pd.DataFrame:
 
 @st.cache_data(ttl=15)
 def get_car_data(
-        session_key: int,
-        driver_number: int,
-        date_start: str,
-        date_end: str,
+    session_key: int,
+    driver_number: int,
+    date_start: str,
+    date_end: str,
 ) -> pd.DataFrame:
     """Return car telemetry for a specific time range."""
     params = {
@@ -100,7 +104,7 @@ def get_car_data(
 
     df = pd.DataFrame(data)
     if not df.empty:
-        df["date"] = pd.to_datetime(df["date"], format='ISO8601', errors='coerce')
+        df["date"] = pd.to_datetime(df["date"], format="ISO8601", errors="coerce")
         df["throttle"] = pd.to_numeric(df["throttle"], errors="coerce")
         df["speed"] = pd.to_numeric(df["speed"], errors="coerce")
         df["rpm"] = pd.to_numeric(df["rpm"], errors="coerce")
@@ -133,7 +137,7 @@ options = list(driver_map.keys())
 selected = st.sidebar.multiselect(
     "Compare drivers",
     options,
-    default=options[:min(5, len(options))],
+    default=options[: min(5, len(options))],
     format_func=lambda x: driver_map[x]["name_acronym"],
 )
 
@@ -165,7 +169,7 @@ else:
     )
 
     # Add lap counts if available
-    if not laps.empty:
+    if not laps.empty and "lap_number" in laps.columns:
         lap_counts = laps.groupby("driver_number")["lap_number"].max().reset_index()
         lap_counts.columns = ["driver_number", "laps"]
         latest = latest.merge(lap_counts, on="driver_number", how="left")
@@ -197,9 +201,14 @@ else:
         )
 
         # Remove invalid lap times
-        lap_subset = lap_subset.dropna(subset=["lap_duration", "lap_number"])
+        if "lap_number" in lap_subset.columns:
+            lap_subset = lap_subset.dropna(subset=["lap_duration", "lap_number"])
+        else:
+            lap_subset = lap_subset.dropna(subset=["lap_duration"])
 
-        if not lap_subset.empty:
+        if "lap_number" not in lap_subset.columns:
+            st.write("Lap numbers not available for race trace.")
+        elif not lap_subset.empty:
             chart = (
                 alt.Chart(lap_subset)
                 .mark_line(point=True)
@@ -231,15 +240,22 @@ else:
         )
 
         # Filter out invalid positions and lap numbers
-        pos_laps = pos_laps.dropna(subset=["position", "lap_number"])
+        if "lap_number" in pos_laps.columns:
+            pos_laps = pos_laps.dropna(subset=["position", "lap_number"])
+        else:
+            pos_laps = pos_laps.dropna(subset=["position"])
 
-        if not pos_laps.empty:
+        if "lap_number" not in pos_laps.columns:
+            st.write("Lap numbers not available for lap chart.")
+        elif not pos_laps.empty:
             chart = (
                 alt.Chart(pos_laps)
                 .mark_line(point=True)
                 .encode(
                     x=alt.X("lap_number:Q", title="Lap"),
-                    y=alt.Y("position:Q", scale=alt.Scale(reverse=True), title="Position"),
+                    y=alt.Y(
+                        "position:Q", scale=alt.Scale(reverse=True), title="Position"
+                    ),
                     color=alt.Color("Driver:N", legend=alt.Legend(title="Driver")),
                     tooltip=["Driver", "lap_number", "position"],
                 )
@@ -265,9 +281,14 @@ else:
         )
 
         # Remove invalid data
-        lap_subset = lap_subset.dropna(subset=["lap_duration", "lap_number"])
+        if "lap_number" in lap_subset.columns:
+            lap_subset = lap_subset.dropna(subset=["lap_duration", "lap_number"])
+        else:
+            lap_subset = lap_subset.dropna(subset=["lap_duration"])
 
-        if not lap_subset.empty:
+        if "lap_number" not in lap_subset.columns:
+            st.write("Lap numbers not available for heatmap.")
+        elif not lap_subset.empty:
             heatmap = (
                 alt.Chart(lap_subset)
                 .mark_rect()
@@ -277,7 +298,7 @@ else:
                     color=alt.Color(
                         "lap_duration:Q",
                         scale=alt.Scale(scheme="viridis", reverse=True),
-                        title="Lap Time (s)"
+                        title="Lap Time (s)",
                     ),
                     tooltip=["Driver", "lap_number", "lap_duration"],
                 )
@@ -307,7 +328,9 @@ else:
         for _, row in best_laps.iterrows():
             try:
                 start = row["date_start"].isoformat()
-                end = (row["date_start"] + pd.to_timedelta(row["lap_duration"], unit="s")).isoformat()
+                end = (
+                    row["date_start"] + pd.to_timedelta(row["lap_duration"], unit="s")
+                ).isoformat()
 
                 df = get_car_data(session_key, row["driver_number"], start, end)
 
@@ -322,13 +345,17 @@ else:
 
                 # Calculate time from start
                 df["t"] = (df["date"] - df["date"].iloc[0]).dt.total_seconds()
-                df["Driver"] = driver_map.get(row["driver_number"], {}).get("name_acronym", str(row["driver_number"]))
+                df["Driver"] = driver_map.get(row["driver_number"], {}).get(
+                    "name_acronym", str(row["driver_number"])
+                )
                 df["Best_Lap_Time"] = row["lap_duration"]
 
                 traces.append(df[["t", "throttle", "Driver", "Best_Lap_Time"]])
 
             except Exception as e:
-                st.warning(f"Could not fetch throttle data for driver {row['driver_number']}: {e}")
+                st.warning(
+                    f"Could not fetch throttle data for driver {row['driver_number']}: {e}"
+                )
                 continue
 
         if not traces:
@@ -342,7 +369,11 @@ else:
                 .mark_line(strokeWidth=2)
                 .encode(
                     x=alt.X("t:Q", title="Time since lap start (s)"),
-                    y=alt.Y("throttle:Q", title="Throttle (%)", scale=alt.Scale(domain=[0, 100])),
+                    y=alt.Y(
+                        "throttle:Q",
+                        title="Throttle (%)",
+                        scale=alt.Scale(domain=[0, 100]),
+                    ),
                     color=alt.Color("Driver:N", legend=alt.Legend(title="Driver")),
                     tooltip=["Driver", "t:Q", "throttle:Q", "Best_Lap_Time:Q"],
                 )
@@ -377,7 +408,9 @@ else:
         for _, row in best_laps.iterrows():
             try:
                 start = row["date_start"].isoformat()
-                end = (row["date_start"] + pd.to_timedelta(row["lap_duration"], unit="s")).isoformat()
+                end = (
+                    row["date_start"] + pd.to_timedelta(row["lap_duration"], unit="s")
+                ).isoformat()
 
                 df = get_car_data(session_key, row["driver_number"], start, end)
 
@@ -392,7 +425,9 @@ else:
 
                 # Calculate time from start
                 df["t"] = (df["date"] - df["date"].iloc[0]).dt.total_seconds()
-                df["Driver"] = driver_map.get(row["driver_number"], {}).get("name_acronym", str(row["driver_number"]))
+                df["Driver"] = driver_map.get(row["driver_number"], {}).get(
+                    "name_acronym", str(row["driver_number"])
+                )
 
                 speed_traces.append(df[["t", "speed", "Driver"]])
 
@@ -437,15 +472,22 @@ else:
         pit_subset = pit_subset.dropna(subset=["date"])
 
         if not pit_subset.empty:
+            tooltips = ["Driver", "date", "pit_duration"]
+            if "lap_number" in pit_subset.columns:
+                tooltips.insert(2, "lap_number")
+
             chart = (
                 alt.Chart(pit_subset)
                 .mark_circle(size=100)
                 .encode(
                     x=alt.X("date:T", title="Time"),
                     y=alt.Y("Driver:N", title="Driver"),
-                    color=alt.Color("compound:N", title="Compound") if "compound" in pit_subset.columns else alt.value(
-                        "orange"),
-                    tooltip=["Driver", "date", "lap_number", "pit_duration"],
+                    color=(
+                        alt.Color("compound:N", title="Compound")
+                        if "compound" in pit_subset.columns
+                        else alt.value("orange")
+                    ),
+                    tooltip=tooltips,
                 )
             )
             st.altair_chart(chart, use_container_width=True)
@@ -456,9 +498,9 @@ else:
 st.sidebar.header("Session Info")
 st.sidebar.write(f"**Session**: {session.get('session_name', 'Unknown')}")
 st.sidebar.write(f"**Session Key**: {session_key}")
-if 'date_start' in session:
+if "date_start" in session:
     st.sidebar.write(f"**Start**: {session['date_start']}")
-if 'date_end' in session:
+if "date_end" in session:
     st.sidebar.write(f"**End**: {session['date_end']}")
 
 # ---------- data status ------------------------------------------------------

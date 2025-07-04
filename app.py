@@ -64,6 +64,27 @@ def get_pit_data(session_key: int) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=15)
+def get_car_data(
+    session_key: int,
+    driver_number: int,
+    date_start: str,
+    date_end: str,
+) -> pd.DataFrame:
+    """Return car telemetry for a specific time range."""
+    params = {
+        "session_key": session_key,
+        "driver_number": driver_number,
+        "date>": date_start,
+        "date<": date_end,
+    }
+    df = pd.DataFrame(fetch_json("car_data", params))
+    if not df.empty:
+        df["date"] = pd.to_datetime(df["date"], format='ISO8601')
+        df["throttle"] = pd.to_numeric(df["throttle"], errors="coerce")
+    return df
+
+
 # ---------- page setup -------------------------------------------------------
 st.set_page_config(page_title="F1 Live Dashboard", layout="wide")
 
@@ -196,6 +217,50 @@ else:
         )
     )
     st.altair_chart(heatmap, use_container_width=True)
+
+# ---------- throttle trace over best lap ------------------------------------
+st.header("Best lap throttle trace")
+
+if laps.empty:
+    st.write("No lap data available for throttle traces.")
+else:
+    best_laps = (
+        laps[laps["driver_number"].isin(selected)]
+        .dropna(subset=["lap_duration"])
+        .sort_values("lap_duration")
+        .groupby("driver_number")
+        .first()
+        .reset_index()
+    )
+
+    traces = []
+    for _, row in best_laps.iterrows():
+        start = row["date_start"].isoformat()
+        end = (row["date_start"] + pd.to_timedelta(row["lap_duration"], unit="s")).isoformat()
+        df = get_car_data(session_key, row["driver_number"], start, end)
+        if df.empty:
+            continue
+        df = df.dropna(subset=["throttle"])
+        df["t"] = (df["date"] - df["date"].iloc[0]).dt.total_seconds()
+        df["Driver"] = driver_map.get(row["driver_number"], {}).get("name_acronym", row["driver_number"])
+        traces.append(df[["t", "throttle", "Driver"]])
+
+    if not traces:
+        st.write("No car telemetry available.")
+    else:
+        data = pd.concat(traces, ignore_index=True)
+        chart = (
+            alt.Chart(data)
+            .mark_line()
+            .encode(
+                x=alt.X("t:Q", title="Time since lap start (s)"),
+                y=alt.Y("throttle:Q", title="Throttle (%)"),
+                color="Driver:N",
+                tooltip=["Driver", "t", "throttle"],
+            )
+            .interactive()
+        )
+        st.altair_chart(chart, use_container_width=True)
 
 # ---------- pit-stop timeline -------------------------------------------------
 st.header("Pit-stop timeline")

@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import matplotlib
 import numpy as np
 import pandas as pd
 import requests
+import time
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -42,15 +43,27 @@ class F1API:
         self.meeting_key: Optional[int] = None
         self.drivers: Dict[int, Dict] = {}
         self.session = requests.Session()
+        # simple cache to avoid spamming the API and to survive
+        # temporary network hiccups
+        self._cache: Dict[str, tuple[float, list]] = {}
+        self.cache_ttl = 5.0
 
     def _get(self, endpoint: str) -> list:
-        resp = self.session.get(f"{self.BASE_URL}/{endpoint}")
-        if resp.status_code == 200:
-            try:
-                return resp.json()
-            except Exception:
-                return []
-        return []
+        now = time.time()
+        if endpoint in self._cache:
+            ts, data = self._cache[endpoint]
+            if now - ts < self.cache_ttl:
+                return data
+        try:
+            resp = self.session.get(f"{self.BASE_URL}/{endpoint}")
+            if resp.status_code == 200:
+                data = resp.json()
+                self._cache[endpoint] = (now, data)
+                return data
+        except Exception:
+            pass
+        # fall back to cached data if available
+        return self._cache.get(endpoint, (now, []))[1]
 
     def get_session(self, key: int) -> Optional[Dict]:
         data = self._get(f"sessions?session_key={key}")
@@ -94,6 +107,22 @@ class F1API:
         data = self._get(
             f"car_data?session_key={self.session_key}&driver_number={driver_number}&limit={limit}"
         )
+        df = pd.DataFrame(data)
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
+        return df
+
+    def get_car_data_range(self, driver_number: int, start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
+        """Return car telemetry for a specific time range."""
+        if not self.session_key:
+            return pd.DataFrame()
+        start_str = start.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        end_str = end.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        query = (
+            f"car_data?session_key={self.session_key}&driver_number={driver_number}"
+            f"&date>={start_str}&date<={end_str}"
+        )
+        data = self._get(query)
         df = pd.DataFrame(data)
         if not df.empty:
             df["date"] = pd.to_datetime(df["date"], utc=True, format="ISO8601", errors="coerce")
@@ -161,6 +190,10 @@ class DataFetcher(QtCore.QThread):
         self.api = api
         self.interval = interval
         self._running = True
+        self.selected_drivers: List[int] = []
+
+    def set_selected_drivers(self, drivers: List[int]) -> None:
+        self.selected_drivers = drivers
 
     def run(self) -> None:
         while self._running:
@@ -171,7 +204,8 @@ class DataFetcher(QtCore.QThread):
             self.api.session_key = session["session_key"]
             self.api.meeting_key = session["meeting_key"]
             drivers = self.api.get_session_drivers()
-            car_data = {num: self.api.get_car_data(num, 50) for num in list(drivers.keys())[:5]}
+            selected = self.selected_drivers or list(drivers.keys())[:5]
+            car_data = {num: self.api.get_car_data(num, 200) for num in selected}
             payload = {
                 "session": session,
                 "drivers": drivers,
@@ -481,6 +515,118 @@ class TyreUsageWidget(MplWidget):
         self.canvas.draw_idle()
 
 
+class DriverSelectionWidget(QtWidgets.QGroupBox):
+    selectionChanged = QtCore.Signal()
+
+    def __init__(self) -> None:
+        super().__init__("Driver Selection")
+        self.list = QtWidgets.QListWidget()
+        self.list.setSelectionMode(QtWidgets.QAbstractItemView.NoSelection)
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(self.list)
+        self.list.itemChanged.connect(lambda _=None: self.selectionChanged.emit())
+
+    def update_drivers(self, drivers: Dict[int, Dict]) -> None:
+        existing = {self.list.item(i).data(QtCore.Qt.UserRole) for i in range(self.list.count())}
+        self.list.blockSignals(True)
+        for num, info in sorted(drivers.items()):
+            if num not in existing:
+                item = QtWidgets.QListWidgetItem(info.get("name_acronym", f"#{num}"))
+                item.setFlags(item.flags() | QtCore.Qt.ItemIsUserCheckable)
+                item.setData(QtCore.Qt.UserRole, num)
+                item.setCheckState(QtCore.Qt.Unchecked)
+                self.list.addItem(item)
+        self.list.blockSignals(False)
+
+    def selected_drivers(self) -> List[int]:
+        result = []
+        for i in range(self.list.count()):
+            item = self.list.item(i)
+            if item.checkState() == QtCore.Qt.Checked:
+                result.append(item.data(QtCore.Qt.UserRole))
+        return result
+
+
+class BestLapTableWidget(QtWidgets.QTableWidget):
+    def __init__(self) -> None:
+        super().__init__(0, 2)
+        self.setHorizontalHeaderLabels(["Driver", "Best Lap (s)"])
+
+    def update_table(self, df: pd.DataFrame, drivers: Dict[int, Dict]) -> None:
+        if df.empty:
+            self.setRowCount(0)
+            return
+        best = df.groupby("driver_number")["lap_duration"].min().sort_values()
+        self.setRowCount(len(best))
+        for row, (num, val) in enumerate(best.items()):
+            name = drivers.get(num, {}).get("name_acronym", f"#{num}")
+            self.setItem(row, 0, QtWidgets.QTableWidgetItem(name))
+            self.setItem(row, 1, QtWidgets.QTableWidgetItem(f"{val:.3f}"))
+        self.resizeColumnsToContents()
+
+
+class LapTimesTableWidget(QtWidgets.QTableWidget):
+    def update_table(self, df: pd.DataFrame, drivers: Dict[int, Dict]) -> None:
+        if df.empty:
+            self.setRowCount(0)
+            self.setColumnCount(0)
+            return
+        df = df.sort_values("lap_number")
+        pivot = df.pivot_table(index="lap_number", columns="driver_number", values="lap_duration")
+        headers = ["Lap"] + [drivers.get(n, {}).get("name_acronym", f"#{n}") for n in pivot.columns]
+        self.setColumnCount(len(headers))
+        self.setHorizontalHeaderLabels(headers)
+        self.setRowCount(len(pivot))
+        for r, (lap_num, row) in enumerate(pivot.iterrows()):
+            self.setItem(r, 0, QtWidgets.QTableWidgetItem(str(int(lap_num))))
+            for c, num in enumerate(pivot.columns, start=1):
+                val = row[num]
+                text = "" if pd.isna(val) else f"{val:.3f}"
+                self.setItem(r, c, QtWidgets.QTableWidgetItem(text))
+        self.resizeColumnsToContents()
+
+
+class BestLapThrottleWidget(MplWidget):
+    def __init__(self) -> None:
+        super().__init__(8, 4)
+        self.ax = self.figure.add_subplot(111)
+
+    def update_chart(
+        self,
+        lap_df: pd.DataFrame,
+        car_data: Dict[int, pd.DataFrame],
+        drivers: Dict[int, Dict],
+        api: F1API,
+    ) -> None:
+        self.ax.clear()
+        if lap_df.empty:
+            self.canvas.draw_idle()
+            return
+        for num in drivers:
+            dlap = lap_df[lap_df["driver_number"] == num]
+            if dlap.empty:
+                continue
+            best = dlap.loc[dlap["lap_duration"].idxmin()]
+            start = best["date_start"]
+            end = start + pd.to_timedelta(best["lap_duration"], unit="s")
+            data = car_data.get(num)
+            if data is None or data.empty or data["date"].min() > start or data["date"].max() < end:
+                data = api.get_car_data_range(num, start, end)
+            seg = data[(data["date"] >= start) & (data["date"] <= end)]
+            if seg.empty:
+                continue
+            t = (seg["date"] - start).dt.total_seconds()
+            label = drivers.get(num, {}).get("name_acronym", f"#{num}")
+            self.ax.plot(t, seg["throttle"], label=label)
+        self.ax.set_title("Throttle % over Best Lap")
+        self.ax.set_xlabel("Time (s)")
+        self.ax.set_ylabel("Throttle %")
+        self.ax.legend()
+        self.ax.grid(True, alpha=0.3)
+        self.figure.tight_layout()
+        self.canvas.draw_idle()
+
+
 class F1MultiViewer(QtWidgets.QMainWindow):
     """Main window for the application."""
 
@@ -507,6 +653,12 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         self.header_label.setFont(font)
         layout.addWidget(self.header_label)
 
+        self.driver_selector = DriverSelectionWidget()
+        layout.addWidget(self.driver_selector)
+        self.driver_selector.selectionChanged.connect(
+            lambda: self.fetcher.set_selected_drivers(self.driver_selector.selected_drivers())
+        )
+
         self.tabs = QtWidgets.QTabWidget()
         layout.addWidget(self.tabs)
 
@@ -524,8 +676,10 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         self.lap_tab = QtWidgets.QWidget()
         l_layout = QtWidgets.QVBoxLayout(self.lap_tab)
         self.laptime_widget = LapTimeWidget()
+        self.throttle_widget = BestLapThrottleWidget()
         self.intervals_widget = IntervalsWidget()
         l_layout.addWidget(self.laptime_widget)
+        l_layout.addWidget(self.throttle_widget)
         l_layout.addWidget(self.intervals_widget)
         scroll2 = QtWidgets.QScrollArea()
         scroll2.setWidget(self.lap_tab)
@@ -544,6 +698,17 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         scroll3.setWidget(self.strategy_tab)
         scroll3.setWidgetResizable(True)
         self.tabs.addTab(scroll3, "Strategy")
+
+        self.standings_tab = QtWidgets.QWidget()
+        st_layout = QtWidgets.QVBoxLayout(self.standings_tab)
+        self.bestlap_table = BestLapTableWidget()
+        self.lap_table = LapTimesTableWidget()
+        st_layout.addWidget(self.bestlap_table)
+        st_layout.addWidget(self.lap_table)
+        scroll4 = QtWidgets.QScrollArea()
+        scroll4.setWidget(self.standings_tab)
+        scroll4.setWidgetResizable(True)
+        self.tabs.addTab(scroll4, "Standings")
 
         self.resize(1200, 800)
 
@@ -570,12 +735,19 @@ class F1MultiViewer(QtWidgets.QMainWindow):
         )
         self.header_label.setText(text)
 
-        self.speed_widget.update_chart(car_data, drivers)
+        self.driver_selector.update_drivers(drivers)
+        selected = self.driver_selector.selected_drivers() or list(drivers.keys())[:5]
+        self.fetcher.set_selected_drivers(selected)
+        filtered_car = {n: car_data.get(n, pd.DataFrame()) for n in selected}
+        self.speed_widget.update_chart(filtered_car, drivers)
         self.position_widget.update_chart(pos, drivers)
         self.laptime_widget.update_chart(lap, drivers)
+        self.throttle_widget.update_chart(lap, filtered_car, {n: drivers[n] for n in selected if n in drivers}, self.api)
         self.weather_widget.update_chart(weather)
         self.pit_widget.update_chart(pit, drivers)
         self.tyre_widget.update_chart(stints, drivers)
+        self.bestlap_table.update_table(lap, drivers)
+        self.lap_table.update_table(lap, drivers)
 
         if session.get("session_type", "").lower() == "race":
             self.intervals_widget.show()
